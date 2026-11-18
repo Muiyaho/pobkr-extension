@@ -3,7 +3,7 @@
 [PoB KR](https://pob.co.kr)의 웹 PoB를 위한 크롬·엣지 확장 프로그램 코드입니다.
 설치 안내와 개인정보처리방침은 **https://pob.co.kr/extension** 에 있습니다.
 
-이 저장소의 파일은 [Releases](../../releases)의 zip에 든 파일 그대로입니다 (빌드나 압축 변환 없이 이 파일들을 묶은 것).
+이 저장소의 파일은 [Releases](https://github.com/Muiyaho/pobkr-extension/releases)의 zip에 든 파일 그대로입니다 (빌드나 압축 변환 없이 이 파일들을 묶은 것).
 받은 zip이 같은 파일인지는 Releases에 적힌 SHA-256으로 확인할 수 있습니다.
 
 ## 하는 일
