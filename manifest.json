@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "PoB KR 웹 PoB 연결",
   "short_name": "PoB KR",
-  "version": "0.4.0",
-  "description": "PoB KR(pob.co.kr) 웹 PoB가 로그인된 Path of Exile 계정(공식·카카오)으로 캐릭터를 가져오고 거래소를 검색하게 하고, 카카오 거래소 검색 저장과 대표 빌드 즉시 비교를 더합니다.",
+  "version": "0.6.0",
+  "description": "PoB KR(pob.co.kr)이 로그인된 Path of Exile 계정(공식·카카오)으로 캐릭터와 창고를 가져오고 웹 PoB 거래소를 검색하게 하고, 카카오 거래소 검색 저장과 대표 빌드 즉시 비교를 더합니다.",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -22,8 +22,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://pob.co.kr/pob*",
-        "https://www.pob.co.kr/pob*"
+        "https://pob.co.kr/*",
+        "https://www.pob.co.kr/*"
       ],
       "js": [
         "content.js"

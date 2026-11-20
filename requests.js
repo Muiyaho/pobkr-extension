@@ -1,4 +1,7 @@
 const PAGES = [
+    /^https:\/\/(?:www\.)?pob\.co\.kr\//
+];
+const WEB_POB_PAGES = [
     /^https:\/\/(?:www\.)?pob\.co\.kr\/pob(?:[/?#]|$)/
 ];
 const HOSTS = new Set(['www.pathofexile.com', 'poe.kakaogames.com']);
@@ -11,6 +14,53 @@ export function loginPage(host) {
 }
 export function allowedPage(url) {
     return typeof url === 'string' && PAGES.some(page => page.test(url));
+}
+export function webPobPage(url) {
+    return typeof url === 'string' && WEB_POB_PAGES.some(page => page.test(url));
+}
+export function characterName(value) {
+    return typeof value === 'string' && /^[^\s/?#&]{1,64}$/u.test(value) ? value : null;
+}
+export function leagueName(value) {
+    return typeof value === 'string' && /^[^\s/?#&%][^/?#&%]{0,63}$/u.test(value) && value.trim() === value ? value : null;
+}
+export function stashTab(value) {
+    return Number.isInteger(value) && value >= 0 && value < 1000 ? value : null;
+}
+export function stashLimits(headers) {
+    const names = String(headers['x-rate-limit-rules'] ?? 'Account,Ip').split(',').map(name => name.trim().toLowerCase()).filter(Boolean);
+    const rules = [];
+    let restricted = 0;
+    for (const name of names) {
+        const limits = String(headers[`x-rate-limit-${name}`] ?? '').split(',').filter(Boolean);
+        const states = String(headers[`x-rate-limit-${name}-state`] ?? '').split(',').filter(Boolean);
+        limits.forEach((limit, index) => {
+            const [hits, period] = limit.split(':').map(Number);
+            const [used, , locked] = (states[index] ?? '').split(':').map(Number);
+            if (!(hits > 0 && period > 0))
+                return;
+            rules.push({ hits, periodMs: period * 1000, used: used > 0 ? used : 0 });
+            if (locked > 0)
+                restricted = Math.max(restricted, locked * 1000);
+        });
+    }
+    return { rules, restrictedMs: restricted };
+}
+export function nextStashSlot(rules, sent, now) {
+    let at = now;
+    for (const rule of rules) {
+        const limit = Math.max(1, rule.hits - 1);
+        const within = sent.filter(time => time > now - rule.periodMs);
+        if (within.length >= limit)
+            at = Math.max(at, within[within.length - limit] + rule.periodMs);
+    }
+    return at;
+}
+export function stashUrl(host, account, league, tab) {
+    if (!accountHost(host) || typeof account !== 'string' || !account || leagueName(league) === null || stashTab(tab) === null)
+        return null;
+    const query = new URLSearchParams({ league, tabs: '1', tabIndex: String(tab), accountName: account });
+    return `https://${host}/character-window/get-stash-items?${query}`;
 }
 function httpsUrl(value) {
     if (typeof value !== 'string')

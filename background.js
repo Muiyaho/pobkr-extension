@@ -1,4 +1,4 @@
-import { SITE, accountHost, allowedPage, allowedRequest, allowedTrade, allowedTradePage, loginPage, tradeLink, tradeSearchId } from './requests.js';
+import { SITE, accountHost, allowedPage, allowedRequest, allowedTrade, allowedTradePage, characterName, leagueName, loginPage, nextStashSlot, stashLimits, stashTab, stashUrl, tradeLink, tradeSearchId, webPobPage } from './requests.js';
 const TIMEOUT_MS = 20_000;
 const MAX_BYTES = 10 * 1024 * 1024;
 async function ask(url) {
@@ -116,16 +116,23 @@ async function site(path, body) {
         return { error: error instanceof Error ? error.message : String(error) };
     }
 }
+const ACCOUNT_KEPT_MS = 10 * 60_000;
+const accountKept = new Map();
 async function realmAccount(realm) {
     const host = REALM_HOSTS[realm];
     if (!host)
         return { error: 'badRealm' };
+    const kept = accountKept.get(realm);
+    if (kept && Date.now() - kept.at < ACCOUNT_KEPT_MS)
+        return kept.found;
     const found = await accountName(host);
     if (!found.accountName)
         return found.loginRequired ? { realmLogin: realm } : found;
     let name = realm === 'pc' ? found.accountName.replace(/\s+/g, '') : found.accountName;
     name = name.replace(/[#-](\d{4})$/, '#$1');
-    return { host, account: name };
+    const account = { host, account: name };
+    accountKept.set(realm, { found: account, at: Date.now() });
+    return account;
 }
 async function characters(realm) {
     const found = await realmAccount(realm);
@@ -169,6 +176,77 @@ async function characterNow(main) {
     characterKept.set(key, { data, at: Date.now() });
     return data;
 }
+const STASH_WAIT_MS = 1_500;
+const stashPace = new Map();
+async function stashAsk(host, url) {
+    let pace = stashPace.get(host);
+    if (!pace)
+        stashPace.set(host, pace = { sent: [], rules: [], until: 0 });
+    const now = Date.now();
+    const at = Math.max(nextStashSlot(pace.rules, pace.sent, now), pace.until);
+    if (at - now > STASH_WAIT_MS)
+        return { wait: Math.ceil((at - now) / 1000) };
+    if (at > now)
+        await new Promise(resolve => setTimeout(resolve, at - now));
+    pace.sent.push(Date.now());
+    const answer = await ask(url);
+    if (!answer.headers)
+        return answer;
+    const limits = stashLimits(answer.headers);
+    const then = Date.now();
+    if (limits.rules.length)
+        pace.rules = limits.rules;
+    for (const rule of pace.rules) {
+        const within = pace.sent.filter(time => time > then - rule.periodMs).length;
+        for (let hit = within; hit < rule.used; hit++)
+            pace.sent.push(then);
+    }
+    const longest = Math.max(0, ...pace.rules.map(rule => rule.periodMs));
+    pace.sent = pace.sent.filter(time => time > then - longest).sort((a, b) => a - b);
+    if (limits.restrictedMs)
+        pace.until = Math.max(pace.until, then + limits.restrictedMs);
+    if (answer.status === 429)
+        pace.until = Math.max(pace.until, then + (Number(answer.headers['retry-after']) || 60) * 1000);
+    return answer;
+}
+async function stash(realm, league, tab) {
+    const found = await realmAccount(realm);
+    if (!found.account)
+        return found;
+    const url = stashUrl(found.host, found.account, league, tab);
+    if (!url)
+        return { error: 'badRequest' };
+    const answer = await stashAsk(found.host, url);
+    if (answer.wait)
+        return { error: 'realmLimited', retryAfter: answer.wait, paced: true };
+    if (answer.error)
+        return { error: answer.error };
+    if (answer.status === 429)
+        return { error: 'realmLimited', retryAfter: Number(answer.headers['retry-after']) || 60 };
+    if (answer.status === 403 || answer.status === 404) {
+        accountKept.delete(realm);
+        return { error: 'noStash' };
+    }
+    if (answer.status !== 200) {
+        let said = '';
+        try {
+            said = String(JSON.parse(answer.body)?.error?.message ?? '').slice(0, 80);
+        }
+        catch { }
+        return { error: `stash ${answer.status}${said ? `: ${said}` : ''}` };
+    }
+    let data;
+    try {
+        data = JSON.parse(answer.body);
+    }
+    catch {
+        return { error: 'badStash' };
+    }
+    if (!data || data.error || !Array.isArray(data.tabs))
+        return { error: 'noStash' };
+    const tabs = data.tabs.map(each => ({ index: each.i, id: each.id, name: each.n, type: each.type, colour: each.colour }));
+    return { account: found.account, tabs, items: Array.isArray(data.items) ? data.items : [] };
+}
 async function compareListing(message) {
     const listing = typeof message.listing === 'string' && /^[A-Za-z0-9]{8,128}$/.test(message.listing) ? message.listing : null;
     const search = tradeSearchId(message.search);
@@ -199,7 +277,7 @@ async function compareListing(message) {
     return site('/api/pob/compare', { json: { listing: answer.body, ...character, ...open ?? {} } });
 }
 async function toWebPob(message, shown) {
-    const tabs = (await chrome.tabs.query({})).filter(tab => tab.id !== undefined && allowedPage(tab.url));
+    const tabs = (await chrome.tabs.query({})).filter(tab => tab.id !== undefined && webPobPage(tab.url));
     tabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0));
     const tab = tabs[0];
     if (!tab)
@@ -276,11 +354,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         return onTradePage(message, sender, sendResponse);
     }
-    if (!['fetch', 'account', 'login', 'trade'].includes(message?.type))
+    if (!['fetch', 'account', 'login', 'trade', 'mine-characters', 'mine-character', 'mine-stash'].includes(message?.type))
         return false;
-    if (sender.id !== chrome.runtime.id || !allowedPage(sender.url)) {
+    if (sender.id !== chrome.runtime.id || !allowedPage(sender.url) || (message.type === 'trade' && !webPobPage(sender.url))) {
         sendResponse({ error: 'PoB KR 확장: 이 페이지에서는 쓸 수 없습니다' });
         return false;
+    }
+    if (message.type === 'mine-characters' || message.type === 'mine-character') {
+        const realm = Object.hasOwn(REALM_HOSTS, message.realm) ? message.realm : null;
+        const character = message.type === 'mine-character' ? characterName(message.character) : '';
+        if (!realm || character === null) {
+            sendResponse({ error: 'badRequest' });
+            return false;
+        }
+        const answer = character ? characterNow({ realm, character }) : characters(realm);
+        answer.then(sendResponse, error => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
+        return true;
+    }
+    if (message.type === 'mine-stash') {
+        const realm = Object.hasOwn(REALM_HOSTS, message.realm) ? message.realm : null;
+        const league = leagueName(message.league);
+        const tab = stashTab(message.tab);
+        if (!realm || league === null || tab === null) {
+            sendResponse({ error: 'badRequest' });
+            return false;
+        }
+        stash(realm, league, tab).then(sendResponse, error => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
+        return true;
     }
     if (message.type === 'login') {
         const url = loginPage(message.host);

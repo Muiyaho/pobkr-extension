@@ -10,7 +10,11 @@
             ? { type: data.kind, host: data.host }
             : data.kind === 'trade'
                 ? { type: 'trade', url: data.url, body: typeof data.body === 'string' ? data.body : undefined }
-                : { type: 'fetch', url: data.url };
+                : data.kind === 'mine-characters' || data.kind === 'mine-character'
+                    ? { type: data.kind, realm: data.realm, character: data.character }
+                    : data.kind === 'mine-stash'
+                        ? { type: 'mine-stash', realm: data.realm, league: data.league, tab: data.tab }
+                        : { type: 'fetch', url: data.url };
         chrome.runtime.sendMessage(message, result => {
             const answer = chrome.runtime.lastError ? { error: chrome.runtime.lastError.message } : result;
             window.postMessage({ type: 'pobkr-extension-response', id: data.id, result: answer }, window.location.origin);
